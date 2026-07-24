@@ -1,5 +1,5 @@
 /*
-** pollserver.c -- a cheezy multiperson chat server
+** server.c -- a multiperson chat server
 */
 
 #include <arpa/inet.h>
