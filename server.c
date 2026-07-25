@@ -15,6 +15,16 @@
 #include <unistd.h>
 
 #define PORT "9034" // Port we're listening on
+#define MSG_CHAT 1
+#define MSG_JOIN 2
+#define CONNECTING 3
+#define READY 4
+
+struct Client {
+  int fd;
+  char usrname[40];
+  int state;
+};
 
 int sendall(int s, void *buf, uint32_t *len) {
   int total = 0;        // Total bytes sent
@@ -41,35 +51,57 @@ int recv_exact(int s, void *buf, uint32_t n) {
   int total = 0;
   int bytesleft = n;
   int rcvd;
+
   while (total < n) {
-    int rcvd = recv(s, buf + total, bytesleft, 0);
+    rcvd = recv(s, buf + total, bytesleft, 0);
 
     if (rcvd == -1 || rcvd == 0) {
       break;
     }
+
     total += rcvd;
     bytesleft -= rcvd;
   }
-  n = total;
-
   return (rcvd == -1) ? -1 : 0;
 }
 
 void send_frame(int s, uint8_t type, void *payload, uint32_t len) {
-
   uint8_t header[5];
   uint32_t head_len = 5;
-  header[0] = type;
   uint32_t net_len = htonl(len);
+
+  // creates the header
+  header[0] = type;
   memcpy(header + 1, &(net_len), sizeof(net_len));
-  printf("sendall-1\n");
-  if (sendall(s, header, &(head_len)) == -1) {
+
+  if (sendall(s, header, &(head_len)) == -1 ||
+      sendall(s, payload, &(len)) == -1) {
     perror("send\n");
   }
-  printf("sendall-2\n");
-  if (sendall(s, payload, &(len)) == -1) {
-    perror("send\n");
+}
+
+int recv_frame(int s, void **buf, uint8_t *type, uint32_t *len) {
+  uint8_t header[5];
+  uint32_t net_len;
+  uint32_t HEADER_LEN = 5;
+
+  if (recv_exact(s, header, HEADER_LEN) == -1) {
+    return -1;
   }
+
+  *type = header[0];
+  memcpy(&(net_len), header + 1, 4);
+  *len = ntohl(net_len);
+  *buf = malloc(*len);
+  if (*buf == NULL) {
+    return -1;
+  }
+
+  if (recv_exact(s, *buf, *len) == -1) {
+    free(*buf);
+    return -1;
+  }
+  return 0;
 }
 /*
  * Convert socket to IP address string.
@@ -151,16 +183,20 @@ int get_listener_socket(void) {
 /*
  * Add a new file descriptor to the set.
  */
-void add_to_pfds(struct pollfd **pfds, int newfd, int *fd_count, int *fd_size) {
+void add_to_pfds(struct pollfd **pfds, int newfd, int *fd_count, int *fd_size,
+                 struct Client **clts) {
   // If we don't have room, add more space in the pfds array
   if (*fd_count == *fd_size) {
     *fd_size *= 2; // Double it
     *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
+    *clts = realloc(*clts, sizeof(**clts) * (*fd_size));
   }
 
   (*pfds)[*fd_count].fd = newfd;
   (*pfds)[*fd_count].events = POLLIN; // Check ready-to-read
   (*pfds)[*fd_count].revents = 0;
+  (*clts)[*fd_count].fd = newfd;
+  (*clts)[*fd_count].state = CONNECTING;
 
   (*fd_count)++;
 }
@@ -168,9 +204,11 @@ void add_to_pfds(struct pollfd **pfds, int newfd, int *fd_count, int *fd_size) {
 /*
  * Remove a file descriptor at a given index from the set.
  */
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count) {
+void del_from_pfds(struct pollfd pfds[], int i, int *fd_count,
+                   struct Client clts[]) {
   // Copy the one from the end over this one
   pfds[i] = pfds[*fd_count - 1];
+  clts[i] = clts[*fd_count - 1];
   (*fd_count)--;
 }
 
@@ -178,7 +216,7 @@ void del_from_pfds(struct pollfd pfds[], int i, int *fd_count) {
  * Handle incoming connections.
  */
 void handle_new_connection(int listener, int *fd_count, int *fd_size,
-                           struct pollfd **pfds) {
+                           struct pollfd **pfds, struct Client **clts) {
   struct sockaddr_storage remoteaddr; // Client address
   socklen_t addrlen;
   int newfd; // Newly accept()ed socket descriptor
@@ -190,11 +228,10 @@ void handle_new_connection(int listener, int *fd_count, int *fd_size,
   if (newfd == -1) {
     perror("accept");
   } else {
-    add_to_pfds(pfds, newfd, fd_count, fd_size);
+    add_to_pfds(pfds, newfd, fd_count, fd_size, clts);
+
     printf("pollserver: new connection from %s on socket %d\n",
            inet_ntop2(&remoteaddr, remoteIP, sizeof remoteIP), newfd);
-    send_frame(newfd, 1, (void *)"hello", 5);
-    printf("sent data\n");
   }
 }
 
@@ -202,26 +239,22 @@ void handle_new_connection(int listener, int *fd_count, int *fd_size,
  * Handle regular client data or client hangups.
  */
 void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
-                        int *pfd_i) {
-  char buf[256]; // Buffer for client data
-  int nbytes = recv(pfds[*pfd_i].fd, buf, sizeof buf, 0);
+                        int *pfd_i, struct Client *clts) {
+  uint8_t *buf; // Buffer for client data
+  uint8_t type;
+  uint32_t len;
+  int nbytes = recv_frame(pfds[*pfd_i].fd, (void *)&buf, &(type), &(len));
   int sender_fd = pfds[*pfd_i].fd;
 
-  if (nbytes <= 0) {
-    // Got error or connection closed by client
-    if (nbytes == 0) {
-      // Connection closed
-      printf("pollserver: socket %d hung up\n", sender_fd);
-    } else {
-      perror("recv");
-    }
+  if (nbytes == -1) {
+    // Connection closed
+    printf("pollserver: socket %d hung up\n", sender_fd);
 
     close(pfds[*pfd_i].fd); // Bye!
-    del_from_pfds(pfds, *pfd_i, fd_count);
+    del_from_pfds(pfds, *pfd_i, fd_count, clts);
 
     // reexamine the slot we just deleted
     (*pfd_i)--;
-
   } else {
     // We got some good data from a client
     // Send to everyone!
@@ -230,11 +263,10 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
 
       // Except the listener and ourselves
       if (dest_fd != listener && dest_fd != sender_fd) {
-        if (sendall(dest_fd, buf, &nbytes) == -1) {
-          perror("send");
-        }
+        send_frame(dest_fd, type, buf, len);
       }
     }
+    free(buf);
   }
 }
 
@@ -242,17 +274,17 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
  * Process all existing connections.
  */
 void process_connections(int listener, int *fd_count, int *fd_size,
-                         struct pollfd **pfds) {
+                         struct pollfd **pfds, struct Client **clts) {
   for (int i = 0; i < *fd_count; i++) {
     // Check if someone's ready to read
     if ((*pfds)[i].revents & (POLLIN | POLLHUP)) {
       // We got one!!
       if ((*pfds)[i].fd == listener) {
         // If we're the listener, it's a new connection
-        handle_new_connection(listener, fd_count, fd_size, pfds);
+        handle_new_connection(listener, fd_count, fd_size, pfds, clts);
       } else {
         // Otherwise we're just a regular client
-        handle_client_data(listener, fd_count, *pfds, &i);
+        handle_client_data(listener, fd_count, *pfds, &i, *clts);
       }
     }
   }
@@ -270,6 +302,7 @@ int main(void) {
   int fd_size = 5;
   int fd_count = 0;
   struct pollfd *pfds = malloc(sizeof *pfds * fd_size);
+  struct Client *clts = malloc(sizeof *clts * fd_size);
 
   // Set up and get a listening socket
   listener = get_listener_socket();
@@ -284,6 +317,7 @@ int main(void) {
   pfds[0].fd = listener;
   pfds[0].events = POLLIN;
   fd_count = 1; // For the listener
+  clts[0].fd = listener;
 
   puts("pollserver: waiting for connections...");
 
@@ -297,7 +331,7 @@ int main(void) {
     }
 
     // Run through connections looking for data to read
-    process_connections(listener, &fd_count, &fd_size, &pfds);
+    process_connections(listener, &fd_count, &fd_size, &pfds, &clts);
   }
 
   free(pfds);
