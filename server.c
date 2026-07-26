@@ -62,7 +62,7 @@ int recv_exact(int s, void *buf, uint32_t n) {
     total += rcvd;
     bytesleft -= rcvd;
   }
-  return (rcvd == -1) ? -1 : 0;
+  return (rcvd == -1 || rcvd == 0) ? -1 : 0;
 }
 
 void send_frame(int s, uint8_t type, void *payload, uint32_t len) {
@@ -248,28 +248,53 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
 
   if (nbytes == -1) {
     // Connection closed
-    printf("pollserver: socket %d hung up\n", sender_fd);
-
+    printf("pollserver: %s hung up\n", clts[*pfd_i].usrname);
+    char msg[70];
+    snprintf(msg, sizeof(msg), "%s left the chat", clts[*pfd_i].usrname);
+    for (int j = 0; j < *fd_count; j++) {
+      int dest_fd = pfds[j].fd;
+      if (dest_fd != listener && dest_fd != sender_fd &&
+          clts[j].state == READY) {
+        send_frame(dest_fd, MSG_JOIN, msg, strlen(msg));
+      }
+    }
     close(pfds[*pfd_i].fd); // Bye!
     del_from_pfds(pfds, *pfd_i, fd_count, clts);
 
     // reexamine the slot we just deleted
     (*pfd_i)--;
   } else {
-    // We got some good data from a client
-    // Send to everyone!
-    for (int j = 0; j < *fd_count; j++) {
-      int dest_fd = pfds[j].fd;
+    if (clts[*pfd_i].state == CONNECTING && len <= 39) {
+      memcpy(clts[*pfd_i].usrname, buf, len);
+      clts[*pfd_i].usrname[len] = '\0';
+      clts[*pfd_i].state = READY;
+      printf("pollserver: %s is now ready\n", clts[*pfd_i].usrname);
 
-      // Except the listener and ourselves
-      if (dest_fd != listener && dest_fd != sender_fd) {
-        send_frame(dest_fd, type, buf, len);
+      char msg[70];
+      snprintf(msg, sizeof(msg), "%s joined the chat", clts[*pfd_i].usrname);
+      for (int j = 0; j < *fd_count; j++) {
+        int dest_fd = pfds[j].fd;
+        if (dest_fd != listener && dest_fd != sender_fd &&
+            clts[j].state == READY) {
+          send_frame(dest_fd, type, msg, strlen(msg));
+        }
+      }
+    } else if (clts[*pfd_i].state == READY) {
+      // We got some good data from a client
+      // Send to everyone!
+      for (int j = 0; j < *fd_count; j++) {
+        int dest_fd = pfds[j].fd;
+
+        // Except the listener and ourselves
+        if (dest_fd != listener && dest_fd != sender_fd &&
+            clts[j].state == READY) {
+          send_frame(dest_fd, type, buf, len);
+        }
       }
     }
     free(buf);
   }
 }
-
 /*
  * Process all existing connections.
  */

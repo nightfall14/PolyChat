@@ -6,6 +6,7 @@ import threading
 HOST = "127.0.0.1"  # The server's hostname or IP address
 PORT = 9034 # The port used by the server
 MSG_CHAT = 1
+MSG_JOIN = 2
 
 def send_frame(soc: socket.socket, msg_type: int, payload: bytes) -> None:
    header = struct.pack("!BI", msg_type, len(payload))
@@ -29,15 +30,16 @@ def send(soc: socket.socket, ):
         msg = input("YOU>")
         if msg == "/ex":
             break
-        send_frame(soc, 1, msg.encode('utf-8'))
+        send_frame(soc, MSG_CHAT, msg.encode('utf-8'))
 
 def recv(s: socket.socket):
     while True:
         try:
             msg_type, data = recv_frame(s)
-            print("hello")
             if msg_type == MSG_CHAT:
-                print(f"recived: {data.decode('utf-8')}")
+                print(f"received: {data.decode('utf-8')}")
+            elif msg_type == MSG_JOIN:
+                print(data.decode('utf-8'))
         except ConnectionError:
             print("disconnect")
             break
@@ -49,6 +51,11 @@ def main():
         send_thread = threading.Thread(target=send, args=(s,), daemon=True)
         recv_thread  = threading.Thread(target=recv, args=(s,), daemon=True)
         threads = [send_thread, recv_thread]
+        usrname = input("Enter UserName: ")
+        while len(usrname) > 39 or len(usrname) == 0:
+            print("USERNAME SHOULD BE 1-39 CHARACTERS!!")
+            usrname = input("Enter UserName: ")
+        send_frame(s,MSG_JOIN, usrname.encode('utf-8'))
         for t in threads:
             t.start()
         send_thread.join()
