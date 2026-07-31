@@ -3,6 +3,7 @@
 */
 
 #include <arpa/inet.h>
+#include <endian.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -15,15 +16,20 @@
 #include <unistd.h>
 
 #define PORT "9034" // Port we're listening on
+#define CHUNK_SIZE 65536
 #define MSG_CHAT 1
 #define MSG_JOIN 2
 #define CONNECTING 3
 #define READY 4
+#define MSG_FILE_START 5
+#define MSG_FILE_CHUNK 6
+#define MSG_FILE_END 7
 
 struct Client {
   int fd;
   char usrname[40];
   int state;
+  int transfer_dest_fd;
 };
 
 int sendall(int s, void *buf, uint32_t *len) {
@@ -102,6 +108,20 @@ int recv_frame(int s, void **buf, uint8_t *type, uint32_t *len) {
     return -1;
   }
   return 0;
+}
+
+void change_tdf_of_sendfd(struct Client *clts, char *name, int *fd_count,
+                          int *snd_i) {
+  if (strcmp("all", name) == 0) {
+    clts[*snd_i].transfer_dest_fd = -2;
+  } else {
+    for (int i = 0; i < *fd_count; i++) {
+      if (strcmp((clts)[i].usrname, name) == 0) {
+        (clts)[*snd_i].transfer_dest_fd = (clts)[i].fd;
+        break;
+      }
+    }
+  }
 }
 /*
  * Convert socket to IP address string.
@@ -197,6 +217,7 @@ void add_to_pfds(struct pollfd **pfds, int newfd, int *fd_count, int *fd_size,
   (*pfds)[*fd_count].revents = 0;
   (*clts)[*fd_count].fd = newfd;
   (*clts)[*fd_count].state = CONNECTING;
+  (*clts)[*fd_count].transfer_dest_fd = -1;
 
   (*fd_count)++;
 }
@@ -280,16 +301,92 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
         }
       }
     } else if (clts[*pfd_i].state == READY) {
-      // We got some good data from a client
-      // Send to everyone!
-      for (int j = 0; j < *fd_count; j++) {
-        int dest_fd = pfds[j].fd;
 
-        // Except the listener and ourselves
-        if (dest_fd != listener && dest_fd != sender_fd &&
-            clts[j].state == READY) {
-          send_frame(dest_fd, type, buf, len);
+      switch (type) {
+      case MSG_FILE_START: {
+        // uint64_t f_size_net;
+        // uint64_t f_size;
+        char recipient[40];
+        uint32_t f_name_len;
+        char *f_name;
+
+        // memcpy(&(f_size_net), buf, 8);
+        // f_size = be64toh(f_size_net);
+        f_name_len = len - 48;
+        memcpy(recipient, buf + 8, 40);
+        recipient[39] = '\0';
+        f_name = malloc(f_name_len + 1);
+        memcpy(f_name, buf + 48, f_name_len);
+        f_name[f_name_len] = '\0';
+
+        change_tdf_of_sendfd(clts, recipient, fd_count, pfd_i);
+
+        if (clts[*pfd_i].transfer_dest_fd == -2) {
+          // Send to everyone!
+          for (int j = 0; j < *fd_count; j++) {
+            int dest_fd = pfds[j].fd;
+
+            // Except the listener and ourselves
+            if (dest_fd != listener && dest_fd != sender_fd &&
+                clts[j].state == READY) {
+              send_frame(dest_fd, type, buf, len);
+            }
+          }
+        } else {
+          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
         }
+        free(f_name);
+        break;
+      }
+
+      case MSG_FILE_CHUNK:
+        if (clts[*pfd_i].transfer_dest_fd == -2) {
+          // Send to everyone!
+          for (int j = 0; j < *fd_count; j++) {
+            int dest_fd = pfds[j].fd;
+
+            // Except the listener and ourselves
+            if (dest_fd != listener && dest_fd != sender_fd &&
+                clts[j].state == READY) {
+              send_frame(dest_fd, type, buf, len);
+            }
+          }
+        } else {
+          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
+        }
+        break;
+
+      case MSG_FILE_END:
+        if (clts[*pfd_i].transfer_dest_fd == -2) {
+          // Send to everyone!
+          for (int j = 0; j < *fd_count; j++) {
+            int dest_fd = pfds[j].fd;
+
+            // Except the listener and ourselves
+            if (dest_fd != listener && dest_fd != sender_fd &&
+                clts[j].state == READY) {
+              send_frame(dest_fd, type, buf, len);
+            }
+          }
+        } else {
+          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
+        }
+        clts[*pfd_i].transfer_dest_fd = -1;
+        break;
+
+      case MSG_CHAT:
+        // We got some good data from a client
+        // Send to everyone!
+        for (int j = 0; j < *fd_count; j++) {
+          int dest_fd = pfds[j].fd;
+
+          // Except the listener and ourselves
+          if (dest_fd != listener && dest_fd != sender_fd &&
+              clts[j].state == READY) {
+            send_frame(dest_fd, type, buf, len);
+          }
+        }
+        break;
       }
     }
     free(buf);
