@@ -7,7 +7,10 @@ authors = [
     { name = "nightfall", email = "sairamsravana1@gmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "textual>=8.2.8",
+    "textual-dev>=1.8.0",
+]
 
 # Add this block at the bottom:
 [project.scripts]
