@@ -1,5 +1,4 @@
 # PolyChat
-
 A real-time multi-client chat and file transfer application built from scratch.
 C server, Python client, custom binary protocol over TCP.
 
@@ -56,43 +55,43 @@ client count.
 | MSG_FILE_END   | 7     | Transfer complete + SHA256 checksum                  |
 
 ## How to run
-
-**Server (Linux only — requires epoll)**
-
+**Git**
 ```bash
+git clone https://github.com/nightfall14/PolyChat
+cd PolyChat
+```
+
+**Server**
+````bash
 gcc -o server server.c -Wall
 ./server
-```
+````
 
-Server listens on port 9034 by default. Edit `#define PORT` in server.c to change.
+**Client**
+````bash
+cd src/polychat
+uv sync
+uv run client.py
+````
 
-**Client (Python 3.10+)**
-
+**Test**
+Run the rapid-fire framing test
 ```bash
-pip install -r requirements.txt
-python client.py
+uv run test.py
 ```
-
-Edit `HOST` in client.py to point to your server's IP address.
-
-**Commands in the client**
-
-```
-/file   — send a file to a specific user or everyone
-/ex     — disconnect and exit
-```
+Tests that 10 rapid messages arrive as separate clean frames.
 
 ## What I learned building this
 
-- TCP socket programming in C from scratch — socket(), bind(), listen(), accept(), send(), recv()
-- Why TCP is a byte stream and not a message protocol — and how to fix it with length-prefix framing
-- Network byte order and htonl/ntohl/be64toh
-- poll() vs epoll() — the O(n) vs O(1) distinction and when it matters
-- Dynamic memory management in C for variable-length network payloads
-- Python threading model — why two threads work for a chat client and what the GIL actually means
+- TCP socket programming in C from scratch — socket(), bind(), listen(), accept(), send(), recv().
+- Why TCP is a byte stream and not a message protocol — and how to fix it with length-prefix framing.
+- Network byte order and htonl/ntohl/be64toh.
+- poll() vs epoll() — the O(n) vs O(1) distinction and when it matters.
+- Dynamic memory management in C for variable-length network payloads.
+- Python threading model — why two threads work for a chat client and what the GIL actually means.
 - Python struct module for binary serialization matching a C wire format
-- SHA256 checksums for file integrity verification
-- Cloud deployment — Azure VM setup, NSG port rules, SSH key authentication, SCP
+- SHA256 checksums for file integrity verification.
+- Cloud deployment — Azure VM setup, NSG port rules, SSH key authentication, SCP.
 
 ## Deployment
 
