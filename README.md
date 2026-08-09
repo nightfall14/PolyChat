@@ -1,4 +1,3 @@
-```markdown
 # PolyChat
 
 A real-time multi-client chat and file transfer application built from scratch.
@@ -14,12 +13,14 @@ C server, Python client, custom binary protocol over TCP.
 
 ## Architecture
 
+```
 Python Client  <-->  C Server (epoll)  <-->  Python Client
                          |
                    Custom Binary Protocol
                    5-byte frame header
                    (1 byte type + 4 byte length)
 
+```
 The server is single-process, event-driven using Linux epoll. It handles
 all clients in one thread with no blocking — epoll notifies the server only
 when a client has data ready, achieving O(1) event dispatch regardless of
@@ -46,13 +47,13 @@ client count.
 
 ## Message types
 
-| Type | Value | Description |
-|------|-------|-------------|
-| MSG_CHAT | 1 | Chat message broadcast |
-| MSG_JOIN | 2 | Username registration / join-leave notification |
-| MSG_FILE_START | 5 | File transfer initiation (filename, size, recipient) |
-| MSG_FILE_CHUNK | 6 | Raw file bytes (64KB chunks) |
-| MSG_FILE_END | 7 | Transfer complete + SHA256 checksum |
+| Type           | Value | Description                                          |
+|----------------|-------|------------------------------------------------------|
+| MSG_CHAT       | 1     | Chat message broadcast                               |
+| MSG_JOIN       | 2     | Username registration / join-leave notification      |
+| MSG_FILE_START | 5     | File transfer initiation (filename, size, recipient) |
+| MSG_FILE_CHUNK | 6     | Raw file bytes (64KB chunks)                         |
+| MSG_FILE_END   | 7     | Transfer complete + SHA256 checksum                  |
 
 ## How to run
 
