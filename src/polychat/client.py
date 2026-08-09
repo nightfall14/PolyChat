@@ -7,7 +7,8 @@ from pathlib import Path
 import os
 from enum import IntEnum
 
-HOST = "127.0.0.1"  # The server's hostname or IP address
+# HOST = "20.2.196.123"  # The server's hostname or IP address
+HOST = "127.0.0.1"
 PORT = 9034  # The port used by the server
 
 
@@ -86,6 +87,8 @@ def send(
 ):
     while True:
         msg = input("YOU>")
+        if not msg.strip():
+            continue
         if msg == "/ex":
             break
         elif msg == "/file":

@@ -12,6 +12,9 @@ dependencies = [
     "textual-dev>=1.8.0",
 ]
 
+[tool.pyright]
+typeCheckingMode = "basic"
+
 # Add this block at the bottom:
 [project.scripts]
 client = "polychat.client:main"

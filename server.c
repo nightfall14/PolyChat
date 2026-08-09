@@ -6,16 +6,18 @@
 #include <endian.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #define PORT "9034" // Port we're listening on
+#define MAX_EVENTS 10
+#define MAX_FDS 1024
 #define CHUNK_SIZE 65536
 #define MSG_CHAT 1
 #define MSG_JOIN 2
@@ -33,8 +35,8 @@ struct Client {
 };
 
 int sendall(int s, void *buf, uint32_t *len) {
-  int total = 0;        // Total bytes sent
-  int bytesleft = *len; // Bytes left to send
+  uint32_t total = 0;        // Total bytes sent
+  uint32_t bytesleft = *len; // Bytes left to send
   int n;
 
   while (total < *len) {
@@ -54,8 +56,8 @@ int sendall(int s, void *buf, uint32_t *len) {
 }
 
 int recv_exact(int s, void *buf, uint32_t n) {
-  int total = 0;
-  int bytesleft = n;
+  uint32_t total = 0;
+  uint32_t bytesleft = n;
   int rcvd;
 
   while (total < n) {
@@ -110,14 +112,14 @@ int recv_frame(int s, void **buf, uint8_t *type, uint32_t *len) {
   return 0;
 }
 
-void change_tdf_of_sendfd(struct Client *clts, char *name, int *fd_count,
-                          int *snd_i) {
+void change_tdf_of_sendfd(struct Client *clts, char *name, int client_count,
+                          int sender_fd, int *client_fds) {
   if (strcmp("all", name) == 0) {
-    clts[*snd_i].transfer_dest_fd = -2;
+    clts[sender_fd].transfer_dest_fd = -2;
   } else {
-    for (int i = 0; i < *fd_count; i++) {
-      if (strcmp((clts)[i].usrname, name) == 0) {
-        (clts)[*snd_i].transfer_dest_fd = (clts)[i].fd;
+    for (int i = 0; i < client_count; i++) {
+      if (strcmp(clts[client_fds[i]].usrname, name) == 0) {
+        (clts)[sender_fd].transfer_dest_fd = (clts)[client_fds[i]].fd;
         break;
       }
     }
@@ -201,43 +203,10 @@ int get_listener_socket(void) {
 }
 
 /*
- * Add a new file descriptor to the set.
- */
-void add_to_pfds(struct pollfd **pfds, int newfd, int *fd_count, int *fd_size,
-                 struct Client **clts) {
-  // If we don't have room, add more space in the pfds array
-  if (*fd_count == *fd_size) {
-    *fd_size *= 2; // Double it
-    *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
-    *clts = realloc(*clts, sizeof(**clts) * (*fd_size));
-  }
-
-  (*pfds)[*fd_count].fd = newfd;
-  (*pfds)[*fd_count].events = POLLIN; // Check ready-to-read
-  (*pfds)[*fd_count].revents = 0;
-  (*clts)[*fd_count].fd = newfd;
-  (*clts)[*fd_count].state = CONNECTING;
-  (*clts)[*fd_count].transfer_dest_fd = -1;
-
-  (*fd_count)++;
-}
-
-/*
- * Remove a file descriptor at a given index from the set.
- */
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count,
-                   struct Client clts[]) {
-  // Copy the one from the end over this one
-  pfds[i] = pfds[*fd_count - 1];
-  clts[i] = clts[*fd_count - 1];
-  (*fd_count)--;
-}
-
-/*
  * Handle incoming connections.
  */
-void handle_new_connection(int listener, int *fd_count, int *fd_size,
-                           struct pollfd **pfds, struct Client **clts) {
+void handle_new_connection(int listener, int epollfd, struct Client *clts,
+                           int *client_count, int *client_fds) {
   struct sockaddr_storage remoteaddr; // Client address
   socklen_t addrlen;
   int newfd; // Newly accept()ed socket descriptor
@@ -249,8 +218,15 @@ void handle_new_connection(int listener, int *fd_count, int *fd_size,
   if (newfd == -1) {
     perror("accept");
   } else {
-    add_to_pfds(pfds, newfd, fd_count, fd_size, clts);
-
+    struct epoll_event new_ev;
+    new_ev.data.fd = newfd;
+    new_ev.events = EPOLLIN;
+    client_fds[*client_count] = newfd;
+    clts[newfd].fd = newfd;
+    clts[newfd].state = CONNECTING;
+    clts[newfd].transfer_dest_fd = -1;
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, newfd, &new_ev);
+    (*client_count)++;
     printf("pollserver: new connection from %s on socket %d\n",
            inet_ntop2(&remoteaddr, remoteIP, sizeof remoteIP), newfd);
   }
@@ -259,48 +235,52 @@ void handle_new_connection(int listener, int *fd_count, int *fd_size,
 /*
  * Handle regular client data or client hangups.
  */
-void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
-                        int *pfd_i, struct Client *clts) {
+void handle_client_data(int listener, int epfd, struct epoll_event *event,
+                        int sender_fd, struct Client *clts, int *client_count,
+                        int *client_fds) {
   uint8_t *buf; // Buffer for client data
   uint8_t type;
   uint32_t len;
-  int nbytes = recv_frame(pfds[*pfd_i].fd, (void *)&buf, &(type), &(len));
-  int sender_fd = pfds[*pfd_i].fd;
+  int nbytes = recv_frame(sender_fd, (void *)&buf, &(type), &(len));
 
   if (nbytes == -1) {
     // Connection closed
-    printf("pollserver: %s hung up\n", clts[*pfd_i].usrname);
+    printf("pollserver: %s hung up\n", clts[sender_fd].usrname);
     char msg[70];
-    snprintf(msg, sizeof(msg), "%s left the chat", clts[*pfd_i].usrname);
-    for (int j = 0; j < *fd_count; j++) {
-      int dest_fd = pfds[j].fd;
+    snprintf(msg, sizeof(msg), "%s left the chat", clts[sender_fd].usrname);
+    for (int j = 0; j < *client_count; j++) {
+      int dest_fd = client_fds[j];
       if (dest_fd != listener && dest_fd != sender_fd &&
-          clts[j].state == READY) {
+          clts[dest_fd].state == READY) {
         send_frame(dest_fd, MSG_JOIN, msg, strlen(msg));
       }
     }
-    close(pfds[*pfd_i].fd); // Bye!
-    del_from_pfds(pfds, *pfd_i, fd_count, clts);
+    close(sender_fd); // Bye!
+    epoll_ctl(epfd, EPOLL_CTL_DEL, sender_fd, event);
+    for (int i = 0; i < *client_count; i++) {
+      if (client_fds[i] == sender_fd) {
+        client_fds[i] = client_fds[*client_count - 1];
+        (*client_count)--;
+      }
+    }
 
-    // reexamine the slot we just deleted
-    (*pfd_i)--;
   } else {
-    if (clts[*pfd_i].state == CONNECTING && len <= 39) {
-      memcpy(clts[*pfd_i].usrname, buf, len);
-      clts[*pfd_i].usrname[len] = '\0';
-      clts[*pfd_i].state = READY;
-      printf("pollserver: %s is now ready\n", clts[*pfd_i].usrname);
+    if (clts[sender_fd].state == CONNECTING && len <= 39) {
+      memcpy(clts[sender_fd].usrname, buf, len);
+      clts[sender_fd].usrname[len] = '\0';
+      clts[sender_fd].state = READY;
+      printf("pollserver: %s is now ready\n", clts[sender_fd].usrname);
 
       char msg[70];
-      snprintf(msg, sizeof(msg), "%s joined the chat", clts[*pfd_i].usrname);
-      for (int j = 0; j < *fd_count; j++) {
-        int dest_fd = pfds[j].fd;
+      snprintf(msg, sizeof(msg), "%s joined the chat", clts[sender_fd].usrname);
+      for (int j = 0; j < *client_count; j++) {
+        int dest_fd = client_fds[j];
         if (dest_fd != listener && dest_fd != sender_fd &&
-            clts[j].state == READY) {
+            clts[dest_fd].state == READY) {
           send_frame(dest_fd, type, msg, strlen(msg));
         }
       }
-    } else if (clts[*pfd_i].state == READY) {
+    } else if (clts[sender_fd].state == READY) {
 
       switch (type) {
       case MSG_FILE_START: {
@@ -319,70 +299,71 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
         memcpy(f_name, buf + 48, f_name_len);
         f_name[f_name_len] = '\0';
 
-        change_tdf_of_sendfd(clts, recipient, fd_count, pfd_i);
+        change_tdf_of_sendfd(clts, recipient, *client_count, sender_fd,
+                             client_fds);
 
-        if (clts[*pfd_i].transfer_dest_fd == -2) {
+        if (clts[sender_fd].transfer_dest_fd == -2) {
           // Send to everyone!
-          for (int j = 0; j < *fd_count; j++) {
-            int dest_fd = pfds[j].fd;
+          for (int j = 0; j < *client_count; j++) {
+            int dest_fd = client_fds[j];
 
             // Except the listener and ourselves
             if (dest_fd != listener && dest_fd != sender_fd &&
-                clts[j].state == READY) {
+                clts[dest_fd].state == READY) {
               send_frame(dest_fd, type, buf, len);
             }
           }
         } else {
-          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
+          send_frame((clts)[sender_fd].transfer_dest_fd, type, buf, len);
         }
         free(f_name);
         break;
       }
 
       case MSG_FILE_CHUNK:
-        if (clts[*pfd_i].transfer_dest_fd == -2) {
+        if (clts[sender_fd].transfer_dest_fd == -2) {
           // Send to everyone!
-          for (int j = 0; j < *fd_count; j++) {
-            int dest_fd = pfds[j].fd;
+          for (int j = 0; j < *client_count; j++) {
+            int dest_fd = client_fds[j];
 
             // Except the listener and ourselves
             if (dest_fd != listener && dest_fd != sender_fd &&
-                clts[j].state == READY) {
+                clts[dest_fd].state == READY) {
               send_frame(dest_fd, type, buf, len);
             }
           }
         } else {
-          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
+          send_frame((clts)[sender_fd].transfer_dest_fd, type, buf, len);
         }
         break;
 
       case MSG_FILE_END:
-        if (clts[*pfd_i].transfer_dest_fd == -2) {
+        if (clts[sender_fd].transfer_dest_fd == -2) {
           // Send to everyone!
-          for (int j = 0; j < *fd_count; j++) {
-            int dest_fd = pfds[j].fd;
+          for (int j = 0; j < *client_count; j++) {
+            int dest_fd = client_fds[j];
 
             // Except the listener and ourselves
             if (dest_fd != listener && dest_fd != sender_fd &&
-                clts[j].state == READY) {
+                clts[dest_fd].state == READY) {
               send_frame(dest_fd, type, buf, len);
             }
           }
         } else {
-          send_frame((clts)[*pfd_i].transfer_dest_fd, type, buf, len);
+          send_frame((clts)[sender_fd].transfer_dest_fd, type, buf, len);
         }
-        clts[*pfd_i].transfer_dest_fd = -1;
+        clts[sender_fd].transfer_dest_fd = -1;
         break;
 
       case MSG_CHAT:
         // We got some good data from a client
         // Send to everyone!
-        for (int j = 0; j < *fd_count; j++) {
-          int dest_fd = pfds[j].fd;
+        for (int j = 0; j < *client_count; j++) {
+          int dest_fd = client_fds[j];
 
           // Except the listener and ourselves
           if (dest_fd != listener && dest_fd != sender_fd &&
-              clts[j].state == READY) {
+              clts[dest_fd].state == READY) {
             send_frame(dest_fd, type, buf, len);
           }
         }
@@ -395,67 +376,70 @@ void handle_client_data(int listener, int *fd_count, struct pollfd *pfds,
 /*
  * Process all existing connections.
  */
-void process_connections(int listener, int *fd_count, int *fd_size,
-                         struct pollfd **pfds, struct Client **clts) {
-  for (int i = 0; i < *fd_count; i++) {
-    // Check if someone's ready to read
-    if ((*pfds)[i].revents & (POLLIN | POLLHUP)) {
-      // We got one!!
-      if ((*pfds)[i].fd == listener) {
-        // If we're the listener, it's a new connection
-        handle_new_connection(listener, fd_count, fd_size, pfds, clts);
-      } else {
-        // Otherwise we're just a regular client
-        handle_client_data(listener, fd_count, *pfds, &i, *clts);
-      }
+void process_connections(int listener, struct epoll_event *events, int nfds,
+                         struct Client *clts, int epfd, int *client_count,
+                         int *client_fds) {
+  for (int i = 0; i < nfds; i++) {
+    if (events[i].data.fd == listener) {
+      handle_new_connection(listener, epfd, clts, client_count, client_fds);
+    } else {
+      // handle_client_data
+      handle_client_data(listener, epfd, events, events[i].data.fd, clts,
+                         client_count, client_fds);
     }
   }
 }
-
 /*
- * Main: create a listener and connection set, loop forever processing
+ *Main: create a listener and connection set, loop forever processing
  * connections.
  */
 int main(void) {
-  int listener; // Listening socket descriptor
+  int listener, nfds, epollfd; // Listening socket descriptor
+  struct epoll_event ev, events[MAX_EVENTS];
+  int client_fds[MAX_FDS];
+  int client_count = 0;
 
-  // Start off with room for 5 connections
-  // (We'll realloc as necessary)
-  int fd_size = 5;
-  int fd_count = 0;
-  struct pollfd *pfds = malloc(sizeof *pfds * fd_size);
-  struct Client *clts = malloc(sizeof *clts * fd_size);
+  epollfd = epoll_create1(0);
+  if (epollfd == -1) {
+    perror("epoll create");
+    exit(EXIT_FAILURE);
+  }
+
+  struct Client *clts = malloc(sizeof *clts * MAX_FDS);
 
   // Set up and get a listening socket
   listener = get_listener_socket();
 
   if (listener == -1) {
     fprintf(stderr, "error getting listening socket\n");
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 
-  // Add the listener to set;
+  // Add the listener to set
   // Report ready to read on incoming connection
-  pfds[0].fd = listener;
-  pfds[0].events = POLLIN;
-  fd_count = 1; // For the listener
-  clts[0].fd = listener;
-
+  ev.data.fd = listener;
+  ev.events = EPOLLIN;
+  clts[listener].fd = listener;
+  client_fds[0] = listener;
+  if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listener, &ev) == -1) {
+    perror("epoll_ctl: listener");
+    exit(EXIT_FAILURE);
+  }
+  client_count = 1;
   puts("pollserver: waiting for connections...");
 
   // Main loop
   for (;;) {
-    int poll_count = poll(pfds, fd_count, -1);
+    nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
 
-    if (poll_count == -1) {
-      perror("poll");
-      exit(1);
+    if (nfds == -1) {
+      perror("epoll_wait");
+      exit(EXIT_FAILURE);
     }
-
     // Run through connections looking for data to read
-    process_connections(listener, &fd_count, &fd_size, &pfds, &clts);
+    process_connections(listener, events, nfds, clts, epollfd, &client_count,
+                        client_fds);
   }
 
-  free(pfds);
   return 0;
 }
