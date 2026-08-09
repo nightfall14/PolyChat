@@ -14,13 +14,11 @@ C server, Python client, custom binary protocol over TCP.
 
 ## Architecture
 
-```
 Python Client  <-->  C Server (epoll)  <-->  Python Client
                          |
                    Custom Binary Protocol
                    5-byte frame header
                    (1 byte type + 4 byte length)
-```
 
 The server is single-process, event-driven using Linux epoll. It handles
 all clients in one thread with no blocking — epoll notifies the server only
@@ -109,4 +107,3 @@ Connect by setting `HOST` in client.py to the server's public IP.
   terminal line. A proper TUI (Textual) is planned.
 - No message history persistence — all messages exist only in memory.
   Adding MySQL for persistence is planned.
-```
