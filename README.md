@@ -62,24 +62,28 @@ cd PolyChat
 ```
 
 **Server**
-````bash
-gcc -o server server.c -Wall
-./server
-````
+```bash
+make run-server
+```
 
 **Client**
-````bash
-cd src/polychat
-uv sync
-uv run client.py
-````
+```bash
+make run-client
+```
 
 **Test**
-Run the rapid-fire framing test
 ```bash
-uv run test.py
+make test //Tests that 10 rapid messages arrive as separate clean frames.
 ```
-Tests that 10 rapid messages arrive as separate clean frames.
+
+**Make commands**
+```
+make              # builds the server binary
+make run-server   # builds and runs the server
+make run-client   # runs the Python client
+make test         # runs the framing test
+make clean        # deletes compiled binary
+```
 
 ## What I learned building this
 
