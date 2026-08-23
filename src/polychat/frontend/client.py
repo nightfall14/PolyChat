@@ -142,6 +142,7 @@ class DemoApp(App):
     BINDINGS = [
         ("d", "toggle_dark", "Toggle dark mode"),
         ("ctrl+q", "quit", "Quit App"),
+        ("ctrl+f", "file_picker", "Open file picker"),
     ]
 
     CSS_PATH = "chat.tcss"
@@ -152,6 +153,9 @@ class DemoApp(App):
         yield ProgressBar(id="file-progess", total=100, show_eta=False)
         yield Input(placeholder="Type a message...", id="chat-input")
         yield Footer()
+
+    def action_file_picker(self) -> None:
+        self.trigger_file_trans()
 
     @work
     async def on_mount(self) -> None:
