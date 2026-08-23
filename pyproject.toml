@@ -18,7 +18,7 @@ typeCheckingMode = "basic"
 extraPaths= ["src/polychat/backend", "src/polychat/ui"]
 # Add this block at the bottom:
 [project.scripts]
-client = "polychat.ui.client:main"
+client = "polychat.frontend.client:main"
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]

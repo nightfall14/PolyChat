@@ -7,11 +7,12 @@ import os
 
 
 class Client:
-    def __init__(self, host, port, on_event_callback) -> None:
+    def __init__(self, host, port, on_event_callback, on_progress) -> None:
         self.host = host
         self.port = port
         self.on_event = on_event_callback
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.on_progress = on_progress
 
     def connect(self, username: str):
         self.s.connect((self.host, self.port))
@@ -91,12 +92,16 @@ class Client:
         chunk_size = 65536
         self.current_hasher = hashlib.sha256()
 
+        bytes_sent = 0
         with open(fpath, "rb") as f:
             while True:
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
                 self.current_hasher.update(chunk)
+                bytes_sent += len(chunk)
+                progress_pct = (bytes_sent / f_size) * 100
+                self.on_progress(progress_pct)
                 send_frame(self.s, MsgTyp.MSG_FILE_CHUNK, chunk)
 
         checksum = self.current_hasher.hexdigest()

@@ -1,16 +1,26 @@
-all: server
+.PHONY: all setup run server clean
 
-server: ./app_server/server.c ./app_server/network.c ./app_server/protocol.c
-	gcc -o server ./app_server/server.c ./app_server/network.c ./app_server/protocol.c -Wall -Wextra
+# This is the default target that runs when someone just types 'make'
+all: run
 
-run-server: server
-	./app_server/server.c 
+# 1. Checks if 'uv' is installed, and syncs dependencies
+setup:
+	@echo "Checking dependencies..."
+	@command -v uv >/dev/null 2>&1 || { echo >&2 "Error: 'uv' is not installed. Please install it via: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
+	uv sync
 
-run-client:
-	cd src/polychat && uv run client.py
+# 2. Runs the Textual UI client
+run: setup
+	@echo "Starting PolyChat Client..."
+	uv run client
 
-test:
-	cd src/polychat && uv run test.py
+# Bonus: Quickly compile and run your C backend!
+server:
+	@echo "Compiling the C server..."
+	gcc app_server/*.c -o app_server/server
+	@echo "Starting PolyChat Server..."
+	./app_server/server
 
 clean:
-	rm -f server
+	@echo "Cleaning up compiled files..."
+	rm -f app_server/server
