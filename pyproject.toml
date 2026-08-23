@@ -15,10 +15,10 @@ dependencies = [
 
 [tool.pyright]
 typeCheckingMode = "basic"
-extraPaths= ["src/polychat/backend"]
+extraPaths= ["src/polychat/backend", "src/polychat/ui"]
 # Add this block at the bottom:
 [project.scripts]
-client = "polychat.client:main"
+client = "polychat.ui.client:main"
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
