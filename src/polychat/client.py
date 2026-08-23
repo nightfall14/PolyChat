@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from .network import Client
+from backend.network import Client
 import time
 from enum import IntEnum
 from textual.app import App, ComposeResult
