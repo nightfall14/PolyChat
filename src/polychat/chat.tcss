@@ -1,0 +1,11 @@
+#chat-log{
+    height: 1fr;
+    width: 100%;
+}
+
+#chat-input{
+    dock: bottom;
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+}

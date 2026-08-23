@@ -1,10 +1,10 @@
 all: server
 
-server: server.c
-	gcc -o server server.c -Wall -Wextra
+server: ./app_server/server.c ./app_server/network.c ./app_server/protocol.c
+	gcc -o server ./app_server/server.c ./app_server/network.c ./app_server/protocol.c -Wall -Wextra
 
 run-server: server
-	./server
+	./app_server/server.c 
 
 run-client:
 	cd src/polychat && uv run client.py

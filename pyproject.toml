@@ -8,13 +8,14 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28.1",
     "textual>=8.2.8",
     "textual-dev>=1.8.0",
 ]
 
 [tool.pyright]
 typeCheckingMode = "basic"
-
+extraPaths= ["src/polychat"]
 # Add this block at the bottom:
 [project.scripts]
 client = "polychat.client:main"
