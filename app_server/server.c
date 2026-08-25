@@ -132,32 +132,23 @@ void handle_client_data(int listener, int epfd, struct epoll_event *event,
 
       switch (type) {
       case MSG_FILE_START: {
-        // uint64_t f_size_net;
-        // uint64_t f_size;
-        char recipient[40];
-        uint32_t f_name_len;
-        char *f_name;
+        if (len < 48) { // Prevent integer underflow and malformed packets
+          break;
+        }
 
-        // memcpy(&(f_size_net), buf, 8);
-        // f_size = be64toh(f_size_net);
-        f_name_len = len - 48;
+        char recipient[41]; // 40 bytes + null terminator
         memcpy(recipient, buf + 8, 40);
-        recipient[39] = '\0';
-        f_name = malloc(f_name_len + 1);
-        memcpy(f_name, buf + 48, f_name_len);
-        f_name[f_name_len] = '\0';
+        recipient[40] = '\0';
 
         change_tdf_of_sendfd(clts, recipient, *client_count, sender_fd,
                              client_fds);
 
         if (clts[sender_fd].transfer_dest_fd == -2) {
-          // Send to everyone!
           route_frame(client_count, client_fds, listener, sender_fd, clts, buf,
                       type, len);
         } else {
-          send_frame((clts)[sender_fd].transfer_dest_fd, type, buf, len);
+          send_frame(clts[sender_fd].transfer_dest_fd, type, buf, len);
         }
-        free(f_name);
         break;
       }
 
