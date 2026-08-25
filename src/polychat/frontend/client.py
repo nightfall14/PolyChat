@@ -1,20 +1,30 @@
 #!/usr/bin/env python
-from ..backend.network import Client
+import argparse
+import hashlib
+from sys import argv, exit, stderr
+from polychat.backend.network import Client
 import time
 from enum import IntEnum
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.events import Key
+from textual.widgets import TextArea
+from textual.binding import Binding
 from pathlib import Path
 from textual.screen import Screen
 from textual.validation import Length, Regex
+from textual.containers import Vertical, Horizontal
 
 # from textual.worker import Worker
 from textual import work, on
 from textual.widgets import (
     RichLog,
+    Button,
     Input,
     Header,
+    ListView,
+    ListItem,
     Footer,
     Label,
     ProgressBar,
@@ -22,8 +32,6 @@ from textual.widgets import (
 )
 
 # HOST = "20.2.196.123"  # The server's hostname or IP address
-HOST = "127.0.0.1"
-PORT = 9034  # The port used by the server
 # HOME = Path.home()
 # storage_path = f"{HOME}/chat/downloads"
 
@@ -40,12 +48,6 @@ class ChatReceived(Message):
     def __init__(self, username: str, text: str) -> None:
         super().__init__()
         self.username = username
-        self.text = text
-
-
-class MsgSend(Message):
-    def __init__(self, text: str) -> None:
-        super().__init__()
         self.text = text
 
 
@@ -91,50 +93,156 @@ class FilePickerModal(Screen):
         self.dismiss(None)
 
 
-class PromptUsername(Screen[str | None]):
-    def __init__(self, text: str) -> None:
-        self.text = text
-        super().__init__()
+class LoginScreen(Screen[str | None]):
+    """A centered, modern login card for username authentication."""
 
-    BINDINGS = [("escape", "quit", "Quit Application")]
-
-    CSS = """
-    Input {
-        margin: 1 1;
-    }
-    Label {
-        margin: 1 2;
-    }
-    """
+    CSS_PATH = "loginScreen.tcss"
 
     def compose(self) -> ComposeResult:
-        yield Label(self.text)
-        yield Input(
-            placeholder="Enter the username...",
-            max_length=39,
-            validators=[
-                Length(minimum=1, failure_description="Username cannot be empty!"),
-                Regex(
-                    regex=r"^[a-zA-Z0-9_-]*$",
-                    failure_description="Only letters, numbers, dashes, and underscores allowed!",
-                ),
-            ],
-            id="usrnm",
-        )
+        with Vertical(id="login-card"):
+            yield Label("POLYCHAT", id="title")
+            yield Label("Enter a username to join the network", id="subtitle")
+            yield Input(
+                placeholder="Username (e.g. Alice_99)",
+                id="usrnm",
+                max_length=39,
+                validators=[
+                    Length(
+                        minimum=1,
+                        failure_description="Username cannot be empty!",
+                    ),
+                    Regex(
+                        regex=r"^[a-zA-Z0-9_-]*$",
+                        failure_description="Allowed characters: a-z, A-Z, 0-9, _, -",
+                    ),
+                ],
+            )
+            yield Label("", id="error-label")
+            yield Button("Connect", variant="success", id="submit-btn")
 
-    def action_quit(self) -> None:
-        self.dismiss(None)
+    def _submit(self) -> None:
+        inp = self.query_one("#usrnm", Input)
+        error_lbl = self.query_one("#error-label", Label)
+        res = inp.validate(inp.value)
 
-    @on(Input.Submitted, "#usrnm")
-    def handle_input_submitted(self, event: Input.Submitted) -> None:
-        if event.validation_result.is_valid and event.validation_result:
-            self.dismiss(event.value.strip())
-            return
+        if res and res.is_valid:
+            error_lbl.display = False
+            self.dismiss(inp.value.strip())
+        elif res and res.failures:
+            error_lbl.update(res.failures[0].description)
+            error_lbl.display = True
 
-        if event.validation_result and not event.validation_result.is_valid:
-            for failure in event.validation_result.failures:
-                # This will pop up the specific failure_description we wrote earlier!
-                self.post_message(Notification(failure.description, severity="error"))
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._submit()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "submit-btn":
+            self._submit()
+
+
+class ChatInput(TextArea):
+    """A multiline text area tailored for chat applications."""
+
+    # We keep these bindings so they display nicely in your Footer UI
+    BINDINGS = [
+        Binding("enter", "submit_message", "Send", show=True),
+        Binding("shift+enter", "insert_newline", "New Line", show=True),
+    ]
+
+    class Submitted(Message):
+        """Posted when the user presses Enter."""
+
+        def __init__(self, input_control: "ChatInput", text: str) -> None:
+            super().__init__()
+            self._control = input_control
+            self.text = text
+
+        @property
+        def control(self) -> "ChatInput":
+            return self._control
+
+    def _on_key(self, event: Key) -> None:
+        """Intercept raw key presses before TextArea consumes them."""
+        if event.key == "enter":
+            self.action_submit_message()
+            event.prevent_default()  # Stops the TextArea from writing a newline
+
+        elif event.key == "shift+enter":
+            self.action_insert_newline()
+            event.prevent_default()
+
+        else:
+            # Let TextArea handle all other normal typing (letters, backspace, etc.)
+            super()._on_key(event)
+
+    def action_submit_message(self) -> None:
+        """Triggered when Enter is pressed."""
+        msg = self.text.strip()
+        if msg:
+            self.post_message(self.Submitted(self, msg))
+
+        self.text = ""
+
+    def action_insert_newline(self) -> None:
+        """Triggered when Shift+Enter is pressed."""
+        self.insert("\n")
+
+
+DISCORD_PALETTE = [
+    "#5865F2",  # Blurple
+    "#57F287",  # Green
+    "#FEE75C",  # Yellow
+    "#EB459E",  # Fuchsia
+    "#ED4245",  # Red
+    "#00B0F4",  # Cyan
+    "#9B59B6",  # Purple
+    "#E67E22",  # Orange
+    "#1ABC9C",  # Teal
+]
+
+
+def get_user_color(username: str) -> str:
+    """Returns a deterministic hex color for a given username."""
+    hash_val = int(hashlib.md5(username.encode("utf-8")).hexdigest(), 16)
+    return DISCORD_PALETTE[hash_val % len(DISCORD_PALETTE)]
+
+
+def add_discord_message(
+    chat_log: RichLog,
+    username: str,
+    text: str,
+    is_self: bool = False,
+    badge: str | None = None,
+) -> None:
+    """Write a Discord-style message with crisp dark contrast and separated badges."""
+
+    timestamp = time.strftime("%I:%M %p")
+    user_color = get_user_color(username)
+    initial = username[0].upper() if username else "?"
+
+    # 1. AVATAR: Dark text (#111827) on user_color background removes the harsh white glare
+    avatar = f"[bold #111827 on {user_color}] {initial} [/bold #111827 on {user_color}]"
+
+    # 2. USERNAME: Bold colored text matching the user's avatar color
+    username_markup = f"[bold {user_color}]{username}[/bold {user_color}]"
+
+    # 3. BADGE: Anchored strictly AFTER username (never next to avatar)
+    badge_markup = ""
+    if badge:
+        badge_markup = f" [bold #111827 on #3BA55D] {badge} [/bold #111827 on #3BA55D]"
+    elif is_self:
+        badge_markup = " [bold #111827 on #FEE75C] YOU [/bold #111827 on #FEE75C]"
+
+    # 4. TIMESTAMP: Soft slate gray (#9CA3AF) instead of glaring white
+    time_markup = f"[#9CA3AF]{timestamp}[/#9CA3AF]"
+
+    # Header Assembly: [AVATAR]  Username [BADGE]  Timestamp
+    header = f"{avatar}  {username_markup}{badge_markup}  {time_markup}"
+
+    # Indented body aligns text cleanly under the username
+    indented_body = "\n".join(f"      {line}" for line in text.split("\n"))
+
+    chat_log.write(f"{header}\n{indented_body}\n")
 
 
 class DemoApp(App):
@@ -147,11 +255,30 @@ class DemoApp(App):
 
     CSS_PATH = "chat.tcss"
 
+    def __init__(self, host, port) -> None:
+        self.host = host
+        self.port = port
+        super().__init__()
+
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield RichLog(id="chat-log", markup=True)
-        yield ProgressBar(id="file-progess", total=100, show_eta=False)
-        yield Input(placeholder="Type a message...", id="chat-input")
+        yield Header(show_clock=True)
+        with Horizontal(id="room-body"):
+            # Sidebar
+            with Vertical(id="sidebar"):
+
+                yield Label("ONLINE USERS", id="sidebar-title")
+                yield ListView(
+                    ListItem(Label("🟢 [bold]Alice[/bold]", classes="online-user")),
+                    ListItem(Label("🟢 [bold]Bob[/bold]", classes="online-user")),
+                    ListItem(Label("🟢 [bold]You[/bold]", classes="online-user")),
+                    id="user-list",
+                )
+
+            # Chat Panel
+            with Vertical(id="chat-main"):
+                yield RichLog(id="chat-log", markup=True)
+                yield ProgressBar(id="file-progress", total=100, show_eta=False)
+                yield ChatInput(id="chat-input", show_line_numbers=False)
         yield Footer()
 
     def action_file_picker(self) -> None:
@@ -159,7 +286,6 @@ class DemoApp(App):
 
     @work
     async def on_mount(self) -> None:
-
         # ---> NEW: Hide the progress bar initially <---
         try:
             self.query_one(ProgressBar).display = False
@@ -167,11 +293,7 @@ class DemoApp(App):
             pass
 
         # 1. Initialize the network engine and pass the callback handler
-        self.usrnm = await self.push_screen_wait(
-            PromptUsername(
-                "Enter the username...(Username should be 1-39 characters, and only these characters are allowed a-z, A-Z, 0-9, _,-"
-            )
-        )
+        self.usrnm = await self.push_screen_wait(LoginScreen())
 
         if self.usrnm is None:
             self.exit()
@@ -180,7 +302,7 @@ class DemoApp(App):
         # If we made it here, they provided a valid string!
         self.notify(f"Welcome, {self.usrnm}!")
         self.client = Client(
-            HOST, PORT, self.handle_network_event, self.handle_progress_update
+            self.host, self.port, self.handle_network_event, self.handle_progress_update
         )
 
         try:
@@ -275,11 +397,7 @@ class DemoApp(App):
             return
 
         # Await the screen directly. DO NOT use call_from_thread here!
-        recipient = await self.push_screen_wait(
-            PromptUsername(
-                'Enter the username of the person you want to send the file (or type "all"):'
-            )
-        )
+        recipient = await self.push_screen_wait(LoginScreen())
 
         if not recipient:
             self.notify("File transfer canceled", severity="warning")
@@ -303,14 +421,6 @@ class DemoApp(App):
             self.notify, f"File {Path(fpath).stem} transferred successfully!"
         )
 
-    @on(Input.Submitted, "#chat-input")
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        msg = event.value.strip()
-        if not msg:
-            return
-        self.send(msg)
-        event.input.clear()
-
     @work(exclusive=True, thread=True)
     def send(self, msg) -> None:
         match msg:
@@ -321,25 +431,21 @@ class DemoApp(App):
             # Send to the server
             case _:
                 self.client.send_message(msg)
-                self.post_message(MsgSend(msg))
+
+    @on(ChatInput.Submitted, "#chat-input")
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        msg = event.text.strip()
+        if not msg:
+            return
+        self.send(msg)
+        chat_log = self.query_one(RichLog)
+        add_discord_message(chat_log, self.usrnm, msg, is_self=True)
 
     # These also go INSIDE your Textual App class
     @on(ChatReceived)
     def on_chat_received(self, event: ChatReceived) -> None:
-        time_now = time.strftime("%H:%M", time.gmtime())
         chat_log = self.query_one(RichLog)
-        chat_log.write(
-            f"[dim italic][{time_now}][/dim italic] [magenta]{event.username}:[/magenta]{event.text}"
-        )
-
-    @on(MsgSend)
-    def on_msg_send(self, event: MsgSend) -> None:
-        # ---> NEW: Print your own message to the log! <---
-        time_now = time.strftime("%H:%M", time.gmtime())
-        chat_log = self.query_one(RichLog)
-        chat_log.write(
-            f"[dim italic][{time_now}][/dim italic] [bold blue]{self.usrnm}(YOU):[/bold blue] {event.text}"
-        )
+        add_discord_message(chat_log, event.username, event.text.strip(), is_self=False)
 
     @on(Notification)
     def on_join_notification(self, event: Notification) -> None:
@@ -353,7 +459,24 @@ class DemoApp(App):
 
 
 def main():
-    app = DemoApp()
+    parser = argparse.ArgumentParser(description="Launch the PolyChat terminal client.")
+
+    # 2. Define the expected arguments
+    parser.add_argument("host", help="The server IP address (e.g., 127.0.0.1)")
+    parser.add_argument(
+        "port",
+        type=int,  # Automatically converts the string to an integer!
+        help="The server port (e.g., 9034)",
+    )
+
+    # 3. Parse the arguments (this handles errors automatically)
+    args = parser.parse_args()
+
+    # 4. Access your variables safely
+    HOST = args.host
+    PORT = args.port
+
+    app = DemoApp(HOST, PORT)
     exit_msg = app.run()
     if exit_msg:
         print(exit_msg)

@@ -1,11 +1,56 @@
-#chat-log{
-    height: 1fr;
-    width: 100%;
-}
+    #room-body {
+        height: 1fr;
+    }
 
-#chat-input{
-    dock: bottom;
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
-}
+    /* Left Sidebar: Online Users */
+    #sidebar {
+        width: 26;
+        background: $panel;
+        border-right: heavy $primary-background;
+        padding: 1 1;
+    }
+
+    #sidebar-title {
+        text-style: bold;
+        color: $accent;
+        padding-bottom: 1;
+        border-bottom: solid $primary-muted;
+        margin-bottom: 1;
+    }
+
+    #user-list {
+        background: transparent;
+    }
+
+    .online-user {
+        color: $success;
+    }
+
+    /* Right Main Panel: Chat Feed & Controls */
+    #chat-main {
+        width: 1fr;
+        padding: 0 1;
+    }
+
+    RichLog {
+        height: 1fr;
+        background: $background;
+        border: round $primary;
+        padding: 1 2;
+        scrollbar-size: 1 1;
+    }
+
+    #file-progress {
+        display: none;
+        margin: 1 0 0 0;
+    }
+
+    ChatInput {
+        height: 5; /* Gives enough room for 3 lines of text + borders */
+        margin: 1 0;
+        border: tall $primary-background;
+    }
+
+    ChatInput:focus {
+        border: tall $accent;
+    }

@@ -1,4 +1,4 @@
-.PHONY: all setup run server clean
+.PHONY: all setup run server run-server clean
 
 # This is the default target that runs when someone just types 'make'
 all: run
@@ -18,9 +18,11 @@ run: setup
 server:
 	@echo "Compiling the C server..."
 	gcc app_server/*.c -o app_server/server
+
+run-server:
 	@echo "Starting PolyChat Server..."
 	./app_server/server
 
 clean:
 	@echo "Cleaning up compiled files..."
-	rm -f app_server/server
+	rm -f ./app_server/server

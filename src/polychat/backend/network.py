@@ -1,5 +1,5 @@
 import socket
-from .protocol import MsgTyp, send_frame, recv_frame
+from polychat.backend.protocol import MsgTyp, send_frame, recv_frame
 import hashlib
 from pathlib import Path
 import struct

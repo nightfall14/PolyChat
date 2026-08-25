@@ -1,0 +1,46 @@
+LoginScreen {
+    align: center middle;
+    background: $background;
+}
+
+#login-card {
+    width: 50;
+    height: auto;
+    border: round $primary;
+    background: $panel;
+    padding: 2 3;
+}
+
+#title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 0;
+}
+
+#subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+Input {
+    margin-top: 1;
+    border: tall $primary-background;
+}
+
+Input:focus {
+    border: tall $accent;
+}
+
+#error-label {
+    color: $error;
+    text-align: center;
+    margin-top: 1;
+    display: none;
+}
+
+Button {
+    width: 100%;
+    margin-top: 1;
+}
