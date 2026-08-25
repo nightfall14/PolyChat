@@ -460,26 +460,42 @@ class PolyChat(App):
 
 
 def update_repository():
-    """Pulls the latest code and syncs dependencies."""
-    print("📥 Pulling latest changes from the repository...")
+    """Checks for updates, pulls if necessary, and syncs dependencies."""
+    print("🔍 Checking for updates...")
     try:
-        # 1. Update the source code
+        # 1. Fetch the latest metadata from the remote repository (silent output)
+        subprocess.run(["git", "fetch"], check=True, capture_output=True)
+
+        # 2. Get the commit hashes for the local branch and the remote branch
+        local_hash = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        remote_hash = subprocess.run(
+            ["git", "rev-parse", "@{u}"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        # 3. Compare them!
+        if local_hash == remote_hash:
+            print("✨ You are already on the latest version!")
+            sys.exit(0)
+
+        # 4. If they don't match, proceed with the update
+        print("📥 New version found! Pulling changes...")
         subprocess.run(["git", "pull"], check=True)
 
-        # 2. Update dependencies in the virtual environment
         print("📦 Syncing dependencies with uv...")
         subprocess.run(["uv", "sync"], check=True)
 
         print("✅ Update complete! Please run the client again to use the new version.")
+        sys.exit(0)
+
     except subprocess.CalledProcessError:
         print(
-            "❌ Failed to update. Please check your internet connection or git status.",
+            "❌ Failed to check for updates. Make sure you are connected to the internet and inside a valid git repository.",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    # Exit the program so the user can restart it with the new code
-    sys.exit(0)
 
 
 def main():

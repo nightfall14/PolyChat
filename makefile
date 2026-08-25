@@ -12,7 +12,7 @@ setup:
 # 2. Runs the Textual UI client
 run: setup
 	@echo "Starting PolyChat Client..."
-	uv run client
+	uv run client 192.168.43.141 9034
 
 # Bonus: Quickly compile and run your C backend!
 server:
@@ -23,13 +23,18 @@ run-server:
 	@echo "Starting PolyChat Server..."
 	./app_server/server
 
-# Add this block to your makefile
 update:
-	@echo "📥 Pulling latest changes from the repository..."
-	git pull
-	@echo "📦 Syncing dependencies with uv..."
-	uv sync
-	@echo "✅ Update complete!"
+	@echo "🔍 Checking for updates..."
+	@git fetch
+	@if [ "$$(git rev-parse HEAD)" = "$$(git rev-parse @{u})" ]; then \
+		echo "✨ You are already on the latest version!"; \
+	else \
+		echo "📥 New version found! Pulling changes..."; \
+		git pull; \
+		echo "📦 Syncing dependencies with uv..."; \
+		uv sync; \
+		echo "✅ Update complete!"; \
+	fi
 
 clean:
 	@echo "Cleaning up compiled files..."
