@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import argparse
+import subprocess
+import sys
 import hashlib
-from sys import argv, exit, stderr
 from polychat.backend.network import Client
 import time
 from enum import IntEnum
@@ -245,7 +246,7 @@ def add_discord_message(
     chat_log.write(f"{header}\n{indented_body}\n")
 
 
-class DemoApp(App):
+class PolyChat(App):
     # This tells Textual to handle Ctrl+C cleanly
     BINDINGS = [
         ("d", "toggle_dark", "Toggle dark mode"),
@@ -458,25 +459,64 @@ class DemoApp(App):
         self.notify(event.status_msg, timeout=10)
 
 
+def update_repository():
+    """Pulls the latest code and syncs dependencies."""
+    print("📥 Pulling latest changes from the repository...")
+    try:
+        # 1. Update the source code
+        subprocess.run(["git", "pull"], check=True)
+
+        # 2. Update dependencies in the virtual environment
+        print("📦 Syncing dependencies with uv...")
+        subprocess.run(["uv", "sync"], check=True)
+
+        print("✅ Update complete! Please run the client again to use the new version.")
+    except subprocess.CalledProcessError:
+        print(
+            "❌ Failed to update. Please check your internet connection or git status.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Exit the program so the user can restart it with the new code
+    sys.exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Launch the PolyChat terminal client.")
 
-    # 2. Define the expected arguments
-    parser.add_argument("host", help="The server IP address (e.g., 127.0.0.1)")
+    # 1. Add the update flag (action="store_true" means it's a boolean True/False flag)
     parser.add_argument(
-        "port",
-        type=int,  # Automatically converts the string to an integer!
-        help="The server port (e.g., 9034)",
+        "-U",
+        "--update",
+        action="store_true",
+        help="Update PolyChat to the latest version from the repository",
     )
 
-    # 3. Parse the arguments (this handles errors automatically)
+    # 2. Make host and port accept zero or one arguments (nargs="?")
+    # This prevents argparse from crashing if the user ONLY types '-U'
+    parser.add_argument(
+        "host", nargs="?", help="The server IP address (e.g., 127.0.0.1)"
+    )
+    parser.add_argument(
+        "port", nargs="?", type=int, help="The server port (e.g., 9034)"
+    )
+
     args = parser.parse_args()
 
-    # 4. Access your variables safely
+    # 3. Intercept the update command before doing anything else
+    if args.update:
+        update_repository()
+
+    # 4. If we aren't updating, enforce that host and port MUST be provided
+    if not args.host or not args.port:
+        parser.error("The following arguments are required to connect: host, port")
+
+    # 5. Proceed with normal execution
     HOST = args.host
     PORT = args.port
 
-    app = DemoApp(HOST, PORT)
+    app = PolyChat(HOST, PORT)  # Pass HOST and PORT if needed
     exit_msg = app.run()
     if exit_msg:
         print(exit_msg)

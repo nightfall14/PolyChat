@@ -23,6 +23,14 @@ run-server:
 	@echo "Starting PolyChat Server..."
 	./app_server/server
 
+# Add this block to your makefile
+update:
+	@echo "📥 Pulling latest changes from the repository..."
+	git pull
+	@echo "📦 Syncing dependencies with uv..."
+	uv sync
+	@echo "✅ Update complete!"
+
 clean:
 	@echo "Cleaning up compiled files..."
 	rm -f ./app_server/server
